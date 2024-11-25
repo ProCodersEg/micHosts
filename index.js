@@ -1,15 +1,21 @@
+const express = require('express');
 const net = require('net');
 
-let listeners = [];
+const app = express();
 
-const server = net.createServer((socket) => {
+// Handle HTTP requests (needed for Vercel)
+app.get('/', (req, res) => {
+    res.send('Voice broadcast server is running!');
+});
+
+// Add TCP server for voice broadcasting
+let listeners = [];
+const tcpServer = net.createServer((socket) => {
     console.log('New connection');
 
-    // If it's the broadcaster
     if (!listeners.length) {
         console.log('Broadcaster connected');
         socket.on('data', (data) => {
-            // Relay data to all listeners
             listeners.forEach((listener) => listener.write(data));
         });
 
@@ -19,7 +25,6 @@ const server = net.createServer((socket) => {
         });
 
     } else {
-        // Add new listener
         console.log('New listener connected');
         listeners.push(socket);
 
@@ -30,6 +35,9 @@ const server = net.createServer((socket) => {
     }
 });
 
-server.listen(3000, () => {
-    console.log('Server is running on port 3000');
+tcpServer.listen(4000, () => {
+    console.log('TCP server running on port 4000');
 });
+
+// Export the app for Vercel
+module.exports = app;
