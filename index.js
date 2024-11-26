@@ -89,14 +89,14 @@ const server = net.createServer((socket) => {
     };
 
     // Helper function to limit the number of listeners per channel to prevent overload
-    // const limitListenersPerChannel = (channelId) => {
-    //     const channel = channels[channelId];
-    //     const MAX_LISTENERS = 40; // Limit listeners to 40 per channel
-    //     if (channel.listeners.length > MAX_LISTENERS) {
-    //         console.log(`[WARN] Channel ${channelId} exceeded max listeners limit. Dropping connection.`);
-    //         socket.end(); // Close the connection if there are too many listeners
-    //     }
-    // };
+    const limitListenersPerChannel = (channelId) => {
+        const channel = channels[channelId];
+        const MAX_LISTENERS = 40; // Limit listeners to 40 per channel
+        if (channel.listeners.length > MAX_LISTENERS) {
+            console.log(`[WARN] Channel ${channelId} exceeded max listeners limit. Dropping connection.`);
+            socket.end(); // Close the connection if there are too many listeners
+        }
+    };
 
     // Check if the listener count exceeds the maximum allowed
     socket.on('data', () => {
