@@ -1,128 +1,93 @@
-const net = require('net');
+const WebSocket = require('ws');
 
-// To track broadcasters and listeners grouped by channelId
-let channels = {}; // channelId -> { broadcasters: Map<userId, socket>, listeners: [] }
+let channels = {}; // channelId -> { broadcasters: Map<userId, ws>, listeners: [] }
 
-const server = net.createServer((socket) => {
-    console.log(`New connection from ${socket.remoteAddress}:${socket.remotePort}`);
+module.exports = (req, res) => {
+  // Create a WebSocket server in the serverless function handler
+  const wss = new WebSocket.Server({ noServer: true });
 
-    let userId = null;   // To store the user's ID
-    let channelId = null; // To store the channel ID of the user
-    let role = null;      // To store whether the user is a broadcaster or a listener
+  // Handle WebSocket connection
+  wss.on('connection', (ws) => {
+    console.log('New connection');
 
-    // Handle incoming data
-    socket.on('data', (data) => {
-        const message = data.toString().trim();
+    let userId = null;
+    let channelId = null;
+    let role = null;
 
-        if (message.startsWith("userId:")) {
-            // Extract userId, channelId, and role from the message
-            const parts = message.split(':');
-            userId = parts[1];
-            channelId = parts[2];
-            role = parts[3]; // Either 'broadcaster' or 'listener'
+    ws.on('message', (message) => {
+      const msg = message.toString().trim();
 
-            console.log(`[INFO] User ID: ${userId}, Channel: ${channelId}, Role: ${role}`);
+      if (msg.startsWith("userId:")) {
+        const parts = msg.split(':');
+        userId = parts[1];
+        channelId = parts[2];
+        role = parts[3]; // broadcaster or listener
 
-            // Initialize the channel if it doesn't exist
-            if (!channels[channelId]) {
-                channels[channelId] = { broadcasters: new Map(), listeners: [] };
-                console.log(`[INFO] Channel ${channelId} initialized`);
-            }
+        console.log(`[INFO] User ID: ${userId}, Channel: ${channelId}, Role: ${role}`);
 
-            const channel = channels[channelId];
+        if (!channels[channelId]) {
+          channels[channelId] = { broadcasters: new Map(), listeners: [] };
+          console.log(`[INFO] Channel ${channelId} initialized`);
+        }
 
-            if (role === 'broadcaster') {
-                // Add the broadcaster to the channel
-                if (!channel.broadcasters.has(userId)) {
-                    console.log(`[INFO] Broadcaster ${userId} connected to channel ${channelId}`);
-                    channel.broadcasters.set(userId, socket);
+        const channel = channels[channelId];
 
-                    // When the broadcaster disconnects, remove them from the channel
-                    socket.on('end', () => {
-                        console.log(`[INFO] Broadcaster ${userId} disconnected from channel ${channelId}`);
-                        channel.broadcasters.delete(userId);
-                        cleanUpEmptyChannel(channelId);
-                    });
+        if (role === 'broadcaster') {
+          if (!channel.broadcasters.has(userId)) {
+            console.log(`[INFO] Broadcaster ${userId} connected to channel ${channelId}`);
+            channel.broadcasters.set(userId, ws);
 
-                    // Relay audio to all listeners in the same channel (except this broadcaster)
-                    socket.on('data', (audioData) => {
-                        // Throttle data to avoid flooding listeners
-                        channel.listeners.forEach((listener) => {
-                            if (listener.userId !== userId) {
-                                listener.write(audioData);
-                            }
-                        });
-                    });
-                } else {
-                    console.log(`[INFO] Broadcaster ${userId} already connected to channel ${channelId}`);
+            ws.on('close', () => {
+              console.log(`[INFO] Broadcaster ${userId} disconnected`);
+              channel.broadcasters.delete(userId);
+              cleanUpEmptyChannel(channelId);
+            });
+
+            ws.on('message', (audioData) => {
+              channel.listeners.forEach((listener) => {
+                if (listener.userId !== userId) {
+                  listener.send(audioData);
                 }
-            } else if (role === 'listener') {
-                // Add the listener to the channel
-                console.log(`[INFO] Listener ${userId} connected to channel ${channelId}`);
-                socket.userId = userId; // Store the listener's userId
-                channel.listeners.push(socket);
+              });
+            });
+          } else {
+            console.log(`[INFO] Broadcaster ${userId} already connected`);
+          }
+        } else if (role === 'listener') {
+          console.log(`[INFO] Listener ${userId} connected to channel ${channelId}`);
+          ws.userId = userId;
+          channel.listeners.push(ws);
 
-                // When the listener disconnects, remove them from the channel
-                socket.on('end', () => {
-                    console.log(`[INFO] Listener ${userId} disconnected from channel ${channelId}`);
-                    channel.listeners = channel.listeners.filter((s) => s !== socket);
-                    cleanUpEmptyChannel(channelId);
-                });
-            }
+          ws.on('close', () => {
+            console.log(`[INFO] Listener ${userId} disconnected`);
+            channel.listeners = channel.listeners.filter((listener) => listener !== ws);
+            cleanUpEmptyChannel(channelId);
+          });
         }
+      }
     });
 
-    // Handle socket error
-    socket.on('error', (err) => {
-        console.error(`[ERROR] Socket error for ${userId || 'unknown user'}: ${err.message}`);
-        // Close the socket to prevent further issues
-        socket.end();
+    ws.on('error', (err) => {
+      console.error(`[ERROR] WebSocket error: ${err.message}`);
+      ws.close();
     });
+  });
 
-    // Helper function to clean up empty channels
-    const cleanUpEmptyChannel = (channelId) => {
-        const channel = channels[channelId];
-        if (channel && channel.broadcasters.size === 0 && channel.listeners.length === 0) {
-            console.log(`[INFO] Channel ${channelId} is empty, removing it`);
-            delete channels[channelId];
-        }
-    };
-
-    // Helper function to limit the number of listeners per channel to prevent overload
-    const limitListenersPerChannel = (channelId) => {
-        const channel = channels[channelId];
-        const MAX_LISTENERS = 40; // Limit listeners to 40 per channel
-        if (channel.listeners.length > MAX_LISTENERS) {
-            console.log(`[WARN] Channel ${channelId} exceeded max listeners limit. Dropping connection.`);
-            socket.end(); // Close the connection if there are too many listeners
-        }
-    };
-
-    // Check if the listener count exceeds the maximum allowed
-    socket.on('data', () => {
-        limitListenersPerChannel(channelId);
+  // Handle the HTTP request
+  req.socket.server.on('upgrade', (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
     });
+  });
 
-});
-
-// Gracefully shut down the server when all connections close
-const gracefulShutdown = () => {
-    console.log("[INFO] Server is shutting down gracefully.");
-    Object.values(channels).forEach(({ broadcasters, listeners }) => {
-        broadcasters.forEach((socket) => socket.end());
-        listeners.forEach((socket) => socket.end());
-    });
-    server.close(() => {
-        console.log("[INFO] Server closed successfully.");
-    });
+  res.status(200).send('WebSocket server is running');
 };
 
-// Listen on port 3000
-server.listen(3000, () => {
-    console.log('[INFO] Server is running on port 3000');
-});
-
-// Handle termination signal to gracefully shut down the server
-process.on('SIGINT', gracefulShutdown); // Listen for Ctrl+C or termination signal
-process.on('SIGTERM', gracefulShutdown); // Listen for termination signal
-//aaaa
+// Helper function to clean up empty channels
+const cleanUpEmptyChannel = (channelId) => {
+  const channel = channels[channelId];
+  if (channel && channel.broadcasters.size === 0 && channel.listeners.length === 0) {
+    console.log(`[INFO] Channel ${channelId} is empty, removing it`);
+    delete channels[channelId];
+  }
+};
