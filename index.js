@@ -117,12 +117,11 @@ const gracefulShutdown = () => {
     });
 };
 
-// Listen on port 3000
-server.listen(3000, () => {
-    console.log('[INFO] Server is running on port 3000');
+// Listen on port 3000 and bind to 0.0.0.0 (allowing access from all network interfaces)
+server.listen(3000, '0.0.0.0', () => {
+    console.log('[INFO] Server is running on http://0.0.0.0:3000');
 });
 
 // Handle termination signal to gracefully shut down the server
 process.on('SIGINT', gracefulShutdown); // Listen for Ctrl+C or termination signal
 process.on('SIGTERM', gracefulShutdown); // Listen for termination signal
-//aaaa
