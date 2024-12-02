@@ -11,11 +11,12 @@ export default (req, res) => {
     // Handle WebSocket connection
     wss.on('connection', (ws) => {
       console.log('[INFO] New WebSocket connection');
-
+      
       let userId = null;
       let channelId = null;
       let role = null;
 
+      // Handle incoming messages
       ws.on('message', (message) => {
         const data = message.toString().trim();
         if (data.startsWith("userId:")) {
@@ -26,11 +27,13 @@ export default (req, res) => {
 
           console.log(`[INFO] User ID: ${userId}, Channel: ${channelId}, Role: ${role}`);
 
+          // Ensure channel exists
           if (!channels[channelId]) {
             channels[channelId] = { broadcasters: new Map(), listeners: [] };
           }
           const channel = channels[channelId];
 
+          // Handle broadcasters
           if (role === 'broadcaster') {
             // Check if the broadcaster is already connected
             if (!channel.broadcasters.has(userId)) {
@@ -39,7 +42,9 @@ export default (req, res) => {
 
               // Handle incoming audio data from broadcaster
               ws.on('message', (audioData) => {
-                if (typeof audioData !== 'string') {
+                // Only process audio data (non-string messages)
+                if (audioData instanceof Buffer || audioData instanceof ArrayBuffer) {
+                  // Forward the audio data to all listeners except the broadcaster
                   channel.listeners.forEach(listener => {
                     if (listener.userId !== userId) {
                       listener.send(audioData);
@@ -58,7 +63,10 @@ export default (req, res) => {
             } else {
               console.log(`[INFO] Broadcaster ${userId} already connected to channel ${channelId}`);
             }
-          } else if (role === 'listener') {
+          } 
+          
+          // Handle listeners
+          else if (role === 'listener') {
             console.log(`[INFO] Listener ${userId} connected to channel ${channelId}`);
             ws.userId = userId;
             channel.listeners.push(ws);
@@ -69,23 +77,24 @@ export default (req, res) => {
               cleanUpEmptyChannel(channelId);
             });
 
+            // Limit the number of listeners in each channel
             limitListenersPerChannel(channelId);
           }
         }
       });
 
-      // Error handling to ensure disconnections are captured
+      // WebSocket error handling
       ws.on('error', (err) => {
         console.error(`[ERROR] WebSocket error for ${userId || 'unknown user'}: ${err.message}`);
         ws.close();
       });
 
-      // Ping-pong handling (if you are using a ping/pong mechanism)
+      // Handle ping-pong for connection health
       ws.on('pong', () => {
         console.log('[INFO] Pong received');
       });
 
-      // Helper function to clean up empty channels
+      // Function to clean up empty channels
       const cleanUpEmptyChannel = (channelId) => {
         const channel = channels[channelId];
         if (channel && channel.broadcasters.size === 0 && channel.listeners.length === 0) {
@@ -94,7 +103,7 @@ export default (req, res) => {
         }
       };
 
-      // Helper function to limit the number of listeners per channel
+      // Function to limit the number of listeners per channel
       const limitListenersPerChannel = (channelId) => {
         const channel = channels[channelId];
         const MAX_LISTENERS = 100; // Limit listeners to 100 per channel
